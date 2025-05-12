@@ -4,50 +4,40 @@ import numpy as np
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
-st.set_page_config(page_title="Live Drilling Dashboard", layout="wide")
-st.title("📉 Live Drilling Monitoring - Animated with Alerts")
+st.set_page_config(page_title="Live Drilling Monitor (CSV Upload)", layout="wide")
+st.title("📁 Real-Time Drilling Dashboard - CSV Upload Mode")
 
 # Auto-refresh every 5 seconds
 st_autorefresh(interval=5000, key="refresh")
 
-# Initialize simulated live data
-if 'data' not in st.session_state:
-    st.session_state.data = pd.DataFrame({
-        'Time': pd.date_range(end=pd.Timestamp.now(), periods=60, freq='S'),
-        'ROP': np.random.uniform(0, 100, 60),
-        'WOB': np.random.uniform(120, 160, 60),
-        'RPM': np.random.uniform(30, 70, 60),
-        'Pressure': np.random.uniform(1000, 2000, 60)
-    })
+uploaded_file = st.file_uploader("Upload a CSV file with live drilling data stream", type=["csv"])
 
-# Append new row
-new_row = pd.DataFrame({
-    'Time': [pd.Timestamp.now()],
-    'ROP': [np.random.uniform(0, 100)],
-    'WOB': [np.random.uniform(120, 160)],
-    'RPM': [np.random.uniform(30, 70)],
-    'Pressure': [np.random.uniform(1000, 2000)]
-})
-st.session_state.data = pd.concat([st.session_state.data, new_row]).tail(100)
+if uploaded_file:
+    df = pd.read_csv(uploaded_file, parse_dates=['Time'])
+    df.sort_values('Time', inplace=True)
+    if 'stream_pointer' not in st.session_state:
+        st.session_state.stream_pointer = 60  # Start at initial window
 
-# Select variable to plot
-variable = st.selectbox("Select Variable", ['ROP', 'WOB', 'RPM', 'Pressure'])
+    stream_pointer = st.session_state.stream_pointer
+    data_window = df.iloc[max(0, stream_pointer-60):stream_pointer]
+    st.session_state.stream_pointer = stream_pointer + 1 if stream_pointer < len(df) else 60
 
-# Alert threshold example (dynamic marker)
-threshold = 1800 if variable == 'Pressure' else None
-df = st.session_state.data
+    variable = st.selectbox("Select Variable", ['ROP', 'WOB', 'RPM', 'Pressure'])
 
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=df['Time'], y=df[variable], mode='lines+markers', name=variable))
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=data_window['Time'], y=data_window[variable],
+                             mode='lines+markers', name=variable))
 
-# Annotate if value exceeds threshold
-if threshold:
-    alert_points = df[df[variable] > threshold]
-    for _, row in alert_points.iterrows():
-        fig.add_annotation(x=row['Time'], y=row[variable],
-                           text="⚠️ Spike",
-                           showarrow=True, arrowhead=1,
-                           bgcolor="red", font=dict(color="white"))
+    thresholds = {'Pressure': 1800, 'ROP': 90}
+    if variable in thresholds:
+        limit = thresholds[variable]
+        exceed = data_window[data_window[variable] > limit]
+        for _, row in exceed.iterrows():
+            fig.add_annotation(x=row['Time'], y=row[variable],
+                               text="⚠️ Alert", showarrow=True, arrowhead=2, bgcolor="red")
 
-fig.update_layout(title=f"Live {variable} Trend", template='plotly_dark', xaxis_title="Time", yaxis_title=variable)
-st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(template='plotly_dark', title=f"Live {variable} Stream",
+                      xaxis_title="Time", yaxis_title=variable)
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Please upload a CSV file to begin streaming.")
